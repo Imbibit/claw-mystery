@@ -7,6 +7,7 @@ import { GuideView } from './components/GuideView';
 import { RoomCreateModal } from './components/RoomCreateModal';
 import { ServerSettingsModal } from './components/ServerSettingsModal';
 import { ExportModal } from './components/ExportModal';
+import { OpenClawTestConsole } from './components/OpenClawTestConsole';
 import { DEFAULT_SCRIPTS } from './data/defaultScripts';
 import {
   Script,
@@ -17,12 +18,19 @@ import {
 import { OpenClawOrchestrator } from './services/openclawService';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'home' | 'room' | 'scripts' | 'guide'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'room' | 'scripts' | 'guide' | 'test'>('test');
   const [scripts, setScripts] = useState<Script[]>(() => {
     const saved = localStorage.getItem('claw_scripts');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        // Ensure script-shen-mansion is included if missing
+        const hasShen = parsed.some((s: any) => s.id === 'script-shen-mansion');
+        if (!hasShen) {
+          const shenScript = DEFAULT_SCRIPTS.find((s) => s.id === 'script-shen-mansion');
+          if (shenScript) return [shenScript, ...parsed];
+        }
+        return parsed;
       } catch (e) {
         return DEFAULT_SCRIPTS;
       }
@@ -34,17 +42,18 @@ export default function App() {
     const saved = localStorage.getItem('claw_server_config');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        delete parsed.speed;
+        return parsed;
       } catch (e) {
         // default fallback
       }
     }
     return {
-      serverUrl: 'http://47.98.120.88:8000',
-      wsUrl: 'ws://47.98.120.88:8000/ws',
+      serverUrl: 'http://47.90.189.59:17293',
+      wsUrl: 'ws://47.90.189.59:17293/ws',
       apiToken: '',
-      engineMode: 'LOCAL_AUTONOMOUS',
-      speed: 'normal',
+      engineMode: 'REMOTE_OPENCLAW',
       allowPrivateChat: true,
       status: 'simulated',
     };
@@ -69,11 +78,10 @@ export default function App() {
     localStorage.setItem('claw_server_config', JSON.stringify(openclawConfig));
   }, [openclawConfig]);
 
-  // Quick launch deduction
+  // Quick launch deduction (No artificial speed setting, strictly awaits real Agent)
   const handleLaunchScript = (
     script: Script,
-    engineMode: EngineMode = openclawConfig.engineMode,
-    speed: 'slow' | 'normal' | 'fast' = 'normal',
+    engineMode: EngineMode = openclawConfig.engineMode || 'REMOTE_OPENCLAW',
     allowPrivateChat: boolean = true
   ) => {
     const newOrchestrator = new OpenClawOrchestrator(
@@ -81,7 +89,6 @@ export default function App() {
       {
         ...openclawConfig,
         engineMode,
-        speed,
         allowPrivateChat,
       },
       (updatedState) => {
@@ -167,6 +174,15 @@ export default function App() {
             onSaveScript={handleSaveScript}
             onDeleteScript={handleDeleteScript}
             onSelectScriptToPlay={handleSelectScriptToPlay}
+          />
+        )}
+
+        {activeTab === 'test' && (
+          <OpenClawTestConsole
+            config={openclawConfig}
+            onUpdateConfig={(newConfig) => setOpenclawConfig(newConfig)}
+            onSelectScriptToPlay={handleSelectScriptToPlay}
+            scripts={scripts}
           />
         )}
 

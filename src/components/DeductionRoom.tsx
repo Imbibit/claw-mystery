@@ -21,6 +21,7 @@ import {
   Volume2,
   CheckCircle2,
   AlertTriangle,
+  Brain,
 } from 'lucide-react';
 import {
   RoomState,
@@ -49,6 +50,7 @@ export const DeductionRoom: React.FC<DeductionRoomProps> = ({
   const [activeClueFilter, setActiveClueFilter] = useState<'ALL' | 'PUBLIC' | 'CHARACTER' | 'SCENE'>('ALL');
   const [isCluePanelOpen, setIsCluePanelOpen] = useState(true);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [expandedReasonings, setExpandedReasonings] = useState<Record<string, boolean>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
@@ -311,22 +313,33 @@ export const DeductionRoom: React.FC<DeductionRoomProps> = ({
                   );
                 }
 
-                // 2. DM System or Clue Discovered
+                // 2. DM System or Clue Discovered or Error Alert
                 if (msg.type === 'DM_SYSTEM' || msg.type === 'CLUE_DISCOVERED') {
+                  const isWarning = msg.content.includes('⚠️ 【禁止自动降级】') || msg.content.includes('异常');
+
                   return (
                     <div
                       key={msg.id}
-                      className={`p-3.5 rounded-xl border leading-relaxed text-xs ${
-                        msg.type === 'CLUE_DISCOVERED'
+                      className={`p-3.5 rounded-xl border leading-relaxed text-xs shadow-sm ${
+                        isWarning
+                          ? 'bg-rose-950/30 border-rose-500/50 text-rose-200 ring-1 ring-rose-500/20'
+                          : msg.type === 'CLUE_DISCOVERED'
                           ? 'bg-amber-950/30 border-amber-500/30 text-amber-200'
                           : 'bg-slate-900 border-slate-800 text-slate-300'
                       }`}
                     >
-                      <div className="flex items-center gap-2 mb-1.5 font-bold text-amber-400">
-                        <Shield className="w-3.5 h-3.5" />
-                        <span>{msg.senderName}</span>
+                      <div className="flex items-center justify-between mb-1.5 font-bold">
+                        <div className={`flex items-center gap-2 ${isWarning ? 'text-rose-400' : 'text-amber-400'}`}>
+                          {isWarning ? <AlertTriangle className="w-4 h-4 text-rose-400" /> : <Shield className="w-3.5 h-3.5" />}
+                          <span>{msg.senderName}</span>
+                        </div>
+                        {isWarning && (
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-rose-500/20 border border-rose-500/30 text-rose-300">
+                            已暂停推演 · 严禁降级
+                          </span>
+                        )}
                       </div>
-                      <div className="whitespace-pre-line">{msg.content}</div>
+                      <div className="whitespace-pre-line text-xs">{msg.content}</div>
                     </div>
                   );
                 }
@@ -350,6 +363,7 @@ export const DeductionRoom: React.FC<DeductionRoomProps> = ({
                 // 4. Regular Character Speech / Secret Ballot
                 const isDetective = msg.senderRole === 'DETECTIVE';
                 const isPrivate = msg.isPrivate;
+                const isExpanded = !!expandedReasonings[msg.id];
 
                 return (
                   <div key={msg.id} className="flex gap-3 items-start">
@@ -390,11 +404,77 @@ export const DeductionRoom: React.FC<DeductionRoomProps> = ({
                         }`}
                       >
                         <p className="whitespace-pre-line">{msg.content}</p>
+
+                        {/* Collapsible think reasoning trace if returned by model */}
+                        {msg.reasoningContent && (
+                          <div className="mt-2.5 pt-2 border-t border-slate-800/80">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandedReasonings((prev) => ({
+                                  ...prev,
+                                  [msg.id]: !prev[msg.id],
+                                }))
+                              }
+                              className="flex items-center gap-1.5 text-[11px] text-amber-400/90 hover:text-amber-300 font-medium transition-colors"
+                            >
+                              <Brain className="w-3.5 h-3.5 text-amber-400" />
+                              <span>
+                                {isExpanded ? '收起' : '查看'} OpenClaw 原生思考推理链 (Think Trace)
+                              </span>
+                            </button>
+
+                            {isExpanded && (
+                              <div className="mt-2 p-2.5 rounded-lg bg-slate-950 border border-slate-800 font-mono text-[11px] text-slate-400 whitespace-pre-wrap leading-relaxed max-h-56 overflow-y-auto">
+                                <div className="text-[10px] text-amber-400/70 mb-1 font-sans">
+                                  💡 角色模型深度思考与决策心路：
+                                </div>
+                                {msg.reasoningContent}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
                 );
               })
+            )}
+            {/* Live Agent thinking indicator */}
+            {roomState.isWaitingAgent && (
+              <div className="flex items-center justify-between p-3.5 rounded-xl border border-sky-500/40 bg-sky-950/20 text-sky-200 text-xs shadow-md">
+                <div className="flex items-center gap-3">
+                  {roomState.waitingAgentAvatar ? (
+                    <img
+                      src={roomState.waitingAgentAvatar}
+                      alt={roomState.waitingAgentName}
+                      className="w-8 h-8 rounded-full object-cover border border-sky-400"
+                    />
+                  ) : (
+                    <div className="w-8 h-8 rounded-full bg-sky-500/20 border border-sky-400 flex items-center justify-center text-sky-300 font-bold">
+                      AI
+                    </div>
+                  )}
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
+                    <span className="font-semibold text-sky-300">
+                      【{roomState.waitingAgentName || 'Agent'}】
+                    </span>
+                    <span>正在通过 OpenClaw (qwen3.7-plus) 深度思考推理中，请静候回复...</span>
+                    <span className="inline-flex gap-1 items-center ml-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-bounce" style={{ animationDelay: '0ms' }} />
+                      <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-bounce" style={{ animationDelay: '150ms' }} />
+                      <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-bounce" style={{ animationDelay: '300ms' }} />
+                    </span>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => orchestrator.pause()}
+                  className="px-2.5 py-1 text-[11px] font-medium text-slate-300 bg-slate-900 hover:bg-slate-800 border border-slate-700 rounded-lg transition-colors"
+                >
+                  暂停等待
+                </button>
+              </div>
             )}
             <div ref={messagesEndRef} />
           </div>
@@ -433,22 +513,9 @@ export const DeductionRoom: React.FC<DeductionRoomProps> = ({
                   <span>单步推演</span>
                 </button>
 
-                {/* Speed selector */}
-                <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs">
-                  <span className="text-[11px] text-slate-500 px-1.5">速度:</span>
-                  {(['slow', 'normal', 'fast'] as const).map((spd) => (
-                    <button
-                      key={spd}
-                      onClick={() => orchestrator.setSpeed(spd)}
-                      className={`px-2 py-0.5 rounded text-[11px] font-medium transition-colors ${
-                        roomState.speed === spd
-                          ? 'bg-amber-400 text-slate-950 font-bold'
-                          : 'text-slate-400 hover:text-slate-200'
-                      }`}
-                    >
-                      {spd === 'slow' ? '慢速' : spd === 'normal' ? '中速' : '快速'}
-                    </button>
-                  ))}
+                <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-950 border border-slate-800 text-[11px] text-slate-400">
+                  <Clock className="w-3.5 h-3.5 text-amber-400" />
+                  <span>节奏：静候 Agent 真实回复</span>
                 </div>
               </div>
 

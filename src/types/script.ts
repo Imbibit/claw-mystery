@@ -88,6 +88,7 @@ export interface ChatMessage {
   senderRole: 'DM' | 'DETECTIVE' | 'SUSPECT' | 'SYSTEM';
   type: MessageType;
   content: string;
+  reasoningContent?: string; // OpenClaw/Qwen reasoning thinking trace (<think> tags)
   isPrivate?: boolean;
   privateTargetName?: string;
   privateTargetId?: string;
@@ -110,7 +111,6 @@ export interface OpenClawConfig {
   wsUrl: string;
   apiToken: string;
   engineMode: EngineMode;
-  speed: 'slow' | 'normal' | 'fast'; // slow: 3200ms, normal: 1800ms, fast: 900ms
   allowPrivateChat: boolean;
   status: 'disconnected' | 'connecting' | 'connected' | 'simulated';
 }
@@ -121,7 +121,6 @@ export interface RoomState {
   currentStage: GameStage;
   stageStep: number;
   isPlaying: boolean;
-  speed: 'slow' | 'normal' | 'fast';
   allowPrivateChat: boolean;
   engineMode: EngineMode;
   messages: ChatMessage[];
@@ -130,4 +129,8 @@ export interface RoomState {
   votesAnnounced: boolean;
   startTime: number;
   characterVoteStatus: Record<string, boolean>; // id -> has submitted vote
+  isWaitingAgent?: boolean;
+  waitingAgentName?: string;
+  waitingAgentAvatar?: string;
+  waitingAgentId?: string;
 }

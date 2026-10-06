@@ -34,9 +34,8 @@ export class OpenClawOrchestrator {
       currentStage: 'STAGE_0_PREP',
       stageStep: 0,
       isPlaying: false,
-      speed: config.speed || 'normal',
       allowPrivateChat: config.allowPrivateChat ?? true,
-      engineMode: config.engineMode || 'LOCAL_AUTONOMOUS',
+      engineMode: config.engineMode || 'REMOTE_OPENCLAW',
       messages: [],
       unlockedClueIds: [],
       votes: [],
@@ -48,15 +47,6 @@ export class OpenClawOrchestrator {
 
   public getState(): RoomState {
     return { ...this.roomState };
-  }
-
-  public setSpeed(speed: 'slow' | 'normal' | 'fast') {
-    this.roomState.speed = speed;
-    this.emitState();
-    if (this.roomState.isPlaying) {
-      this.pause();
-      this.play();
-    }
   }
 
   public play() {
@@ -75,10 +65,10 @@ export class OpenClawOrchestrator {
     this.emitState();
   }
 
-  public step() {
+  public async step() {
     if (this.roomState.currentStage === 'STAGE_6_ENDED') return;
     this.pause();
-    this.executeCurrentStep();
+    await this.executeCurrentStep();
   }
 
   public restart() {
@@ -100,6 +90,10 @@ export class OpenClawOrchestrator {
       votesAnnounced: false,
       startTime: Date.now(),
       characterVoteStatus: initialCharacterVoteStatus,
+      isWaitingAgent: false,
+      waitingAgentName: undefined,
+      waitingAgentAvatar: undefined,
+      waitingAgentId: undefined,
     };
     this.emitState();
   }
@@ -108,18 +102,8 @@ export class OpenClawOrchestrator {
     this.onStateChange({ ...this.roomState });
   }
 
-  private getDelay(): number {
-    switch (this.roomState.speed) {
-      case 'slow':
-        return 3200;
-      case 'fast':
-        return 900;
-      case 'normal':
-      default:
-        return 1800;
-    }
-  }
-
+  // 推演节奏：取消任何人工加速设置，真实等待远程 Agent 推理生成。
+  // 每轮 Agent 回复呈现后，留出约 1.8 秒自然阅读间隔再驱动下一个步骤。
   private scheduleNextStep() {
     if (this.timer) clearTimeout(this.timer);
     if (!this.roomState.isPlaying) return;
@@ -132,7 +116,7 @@ export class OpenClawOrchestrator {
       ) {
         this.scheduleNextStep();
       }
-    }, this.getDelay());
+    }, 1800);
   }
 
   private addMessage(msg: Omit<ChatMessage, 'id' | 'timestamp'>) {
@@ -157,13 +141,160 @@ export class OpenClawOrchestrator {
           senderRole: 'DM',
           type: 'CLUE_DISCOVERED',
           stage: this.roomState.currentStage,
-          content: `【线索解锁】${discovererName} 发现了【${clue.title}】！内容已收录至线索档案。`,
+          content: `【线索解锁】${discovererName} 发现了【${clue.title}】！已正式收录至案件公开档案。`,
         });
       }
     }
   }
 
-  // Orchestrates the exact state machine across all 6 phases
+  // 严格调用真实 Agent，取消静默降级替换台词！
+  // 若发生网络异常或 Agent 未返回，如实抛出错误并暂停推演，拒绝用预设台词李代桃僵。
+  private async getAgentSpeech(
+    character: Character,
+    prompt: string
+  ): Promise<{ speech: string; reasoning?: string } | null> {
+    if (this.roomState.engineMode === 'REMOTE_OPENCLAW') {
+      try {
+        return await this.fetchRemoteOpenClawSpeech(character, prompt);
+      } catch (err: any) {
+        // 严格禁止静默降级：明确告知观众推演异常，并暂停推演
+        this.addMessage({
+          senderId: 'dm',
+          senderName: 'OpenClaw 推演异常通知',
+          senderAvatar: '/src/assets/images/agent_dm_portrait_1791266324421.jpg',
+          senderRole: 'DM',
+          type: 'DM_SYSTEM',
+          stage: this.roomState.currentStage,
+          content: `⚠️ 【禁止自动降级】未能从 OpenClaw 角色【${character.name}】(${character.id}) 获取真实回复。\n异常原因：${err.message || '网络连接超时或网关异常'}\n\n系统已严格取消内置预设台词替代，当前推演已自动暂停。请检查阿里云服务器 OpenClaw 服务状态或在测试页排查后，点击【继续推演】。`,
+        });
+        this.pause();
+        return null;
+      }
+    }
+
+    if (this.roomState.engineMode === 'GEMINI_AI') {
+      try {
+        this.roomState.isWaitingAgent = true;
+        this.roomState.waitingAgentName = character.name;
+        this.roomState.waitingAgentAvatar = character.avatar;
+        this.roomState.waitingAgentId = character.id;
+        this.emitState();
+
+        const res = await fetch('/api/ai/agent-turn', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            stage: this.roomState.currentStage,
+            characterName: character.name,
+            roleType: character.roleType,
+            characterSecret: character.secret,
+            alibi: character.alibi,
+            isKiller: character.isKiller,
+            scriptTitle: this.roomState.script.title,
+            scriptBackground: this.roomState.script.background,
+            recentMessages: this.roomState.messages.slice(-5),
+            unlockedClues: this.roomState.script.clues.filter((c) =>
+              this.roomState.unlockedClueIds.includes(c.id)
+            ),
+          }),
+        });
+        const data = await res.json();
+        if (data.speech) {
+          return { speech: data.speech };
+        }
+      } catch (e: any) {
+        console.error('Gemini turn error:', e);
+      } finally {
+        this.roomState.isWaitingAgent = false;
+        this.roomState.waitingAgentName = undefined;
+        this.roomState.waitingAgentAvatar = undefined;
+        this.roomState.waitingAgentId = undefined;
+        this.emitState();
+      }
+    }
+
+    // LOCAL_AUTONOMOUS 纯本地自主推演演示
+    return {
+      speech: this.getLocalFallbackSpeech(character, prompt),
+    };
+  }
+
+  // 严格通过 OpenClaw 请求远程真实 Agent
+  private async fetchRemoteOpenClawSpeech(
+    character: Character,
+    prompt: string
+  ): Promise<{ speech: string; reasoning?: string }> {
+    if (!this.config.serverUrl) {
+      throw new Error('未配置 OpenClaw 远程服务器地址 (请在设置中配置)');
+    }
+
+    // 设置等待状态，在界面显示正在等待该 Agent 真实深度思考中
+    this.roomState.isWaitingAgent = true;
+    this.roomState.waitingAgentName = character.name;
+    this.roomState.waitingAgentAvatar = character.avatar;
+    this.roomState.waitingAgentId = character.id;
+    this.emitState();
+
+    try {
+      const res = await fetch('/api/openclaw/test-chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          serverUrl: this.config.serverUrl,
+          token: this.config.apiToken,
+          agentId: character.id,
+          model: `openclaw/${character.id}`,
+          message: prompt,
+          systemPrompt: `你正在参与剧本杀《${this.roomState.script.title}》。
+你的角色是【${character.name}】（${character.title}，类型：${character.roleType}）。
+你的秘密信息：${character.secret || '无隐瞒'}。
+案发不在场证明：${character.alibi || '正常'}。
+${character.isKiller ? '【绝密身份】你是本案真凶！请极力掩盖罪行，合理辩驳甩锅，绝不直接认罪！' : '【清白立场】你不是凶手！请积极陈述细节、自证清白并质询可疑之人！'}
+请严格保持第一人称身份进行推理，绝不可跳戏或提及AI相关用语。`,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || data.error) {
+        const errMsg = data.error?.message || data.error || `HTTP ${res.status}`;
+        throw new Error(errMsg);
+      }
+
+      const rawContent = data.choices?.[0]?.message?.content;
+      if (!rawContent || typeof rawContent !== 'string') {
+        throw new Error('OpenClaw 未返回有效对白文本 choices[0].message.content');
+      }
+
+      // 保留原生深度思考过程（qwen3.7-plus 的 <think> 标签），避免界面与 OpenClaw 控制台产生差异
+      let reasoningContent: string | undefined = undefined;
+      let speechContent = rawContent.trim();
+
+      const thinkMatch = rawContent.match(/<think>([\s\S]*?)<\/think>/);
+      if (thinkMatch) {
+        reasoningContent = thinkMatch[1].trim();
+        speechContent = rawContent.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+      }
+
+      // 若所有内容都在 think 标签内，直接展示 think 内容作为正文
+      if (!speechContent && reasoningContent) {
+        speechContent = reasoningContent;
+      }
+
+      return {
+        speech: speechContent || rawContent.trim(),
+        reasoning: reasoningContent,
+      };
+    } finally {
+      this.roomState.isWaitingAgent = false;
+      this.roomState.waitingAgentName = undefined;
+      this.roomState.waitingAgentAvatar = undefined;
+      this.roomState.waitingAgentId = undefined;
+      this.emitState();
+    }
+  }
+
+  // 协调 6 大阶段的推演状态机
   private async executeCurrentStep() {
     const { currentStage, stageStep, script } = this.roomState;
     const dm = script.characters.find((c) => c.roleType === 'DM') || script.characters[0];
@@ -201,6 +332,11 @@ export class OpenClawOrchestrator {
           });
           this.roomState.stageStep++;
         } else if (stageStep === 2) {
+          // 侦探开场表态：真实呼叫侦探 Agent
+          const prompt = `沈府书房反锁，沈老爷暴毙，现场唯一的紫砂茶壶嘴检出剧毒。作为租界名探【${detective.name}】，请发表你的第一段现场声明与侦查原则！`;
+          const agentRes = await this.getAgentSpeech(detective, prompt);
+          if (!agentRes) return; // 发生异常已暂停，等待用户排查
+
           this.addMessage({
             senderId: detective.id,
             senderName: detective.name,
@@ -208,9 +344,11 @@ export class OpenClawOrchestrator {
             senderRole: 'DETECTIVE',
             type: 'SPEECH',
             stage: 'STAGE_0_PREP',
-            content: `这场密室惨案非同寻常，门窗闭锁、尸体尚存余温。我将严格依循因果律与物证进行推演，在场所有人均有作案嫌疑，包括我自己。`,
+            content: agentRes.speech,
+            reasoningContent: agentRes.reasoning,
           });
-          // Transition to stage 1
+
+          // 进入阶段 1
           this.roomState.currentStage = 'STAGE_1_INTRO';
           this.roomState.stageStep = 0;
         }
@@ -234,13 +372,15 @@ export class OpenClawOrchestrator {
           });
           this.roomState.stageStep++;
         } else {
-          // Each suspect and detective speaks in order
           const participants = [detective, ...suspects];
           const introIndex = stageStep - 1;
 
           if (introIndex < participants.length) {
             const char = participants[introIndex];
-            const speech = this.getIntroSpeech(char, script);
+            const prompt = `你正在参与剧本杀《${script.title}》。现在是【自我介绍】环节。请作为【${char.name}】（身份：${char.title}），发表你的一段自我介绍，陈述你的身份以及案发时段你的不在场证明：${char.alibi}。请以第一人称简短生动发言。`;
+
+            const agentRes = await this.getAgentSpeech(char, prompt);
+            if (!agentRes) return; // 异常已暂停，严格等待用户排查
 
             this.addMessage({
               senderId: char.id,
@@ -249,11 +389,12 @@ export class OpenClawOrchestrator {
               senderRole: char.roleType,
               type: 'SPEECH',
               stage: 'STAGE_1_INTRO',
-              content: speech,
+              content: agentRes.speech,
+              reasoningContent: agentRes.reasoning,
             });
             this.roomState.stageStep++;
           } else {
-            // Done with introductions
+            // 介绍完毕
             this.addMessage({
               senderId: dm.id,
               senderName: dm.name,
@@ -272,7 +413,7 @@ export class OpenClawOrchestrator {
       }
 
       // ==========================================
-      // STAGE 2: 搜证环节 (Unlock clues dynamically)
+      // STAGE 2: 搜证环节 (Unlock clues dynamically via Agent search)
       // ==========================================
       case 'STAGE_2_SEARCH': {
         if (stageStep === 0) {
@@ -283,7 +424,7 @@ export class OpenClawOrchestrator {
             senderRole: 'DM',
             type: 'STAGE_CHANGE',
             stage: 'STAGE_2_SEARCH',
-            content: `【阶段变更：搜证环节】搜证通道已开启，在场人员正对现场、遗体、起居室及机械设施展开地毯式勘查。`,
+            content: `【阶段变更：搜证环节】搜证通道已开启，在场人员正对现场、遗体、起居室及随身物品展开地毯式勘查。`,
           });
           this.roomState.stageStep++;
         } else {
@@ -292,7 +433,7 @@ export class OpenClawOrchestrator {
 
           if (clueIndex < totalClues.length) {
             const clue = totalClues[clueIndex];
-            // Assign a logical discoverer
+            // 分配一个勘验角色
             let discoverer = detective;
             if (clue.type === 'CHARACTER' && clue.targetCharacterId) {
               const otherSuspects = suspects.filter(
@@ -304,7 +445,11 @@ export class OpenClawOrchestrator {
               discoverer = suspects[clueIndex % suspects.length];
             }
 
-            // Discoverer announces the search action
+            // 呼叫该 Agent 真实陈述其勘查现场发现
+            const prompt = `你在搜证勘验中发现了关键物证【${clue.title}】（证据内容：${clue.content}，位置：${clue.sceneLocation || '现场'}）。作为【${discoverer.name}】，请发表你发现这件证物时的第一反应与现场勘验说明！`;
+            const agentRes = await this.getAgentSpeech(discoverer, prompt);
+            if (!agentRes) return; // 异常暂停
+
             this.addMessage({
               senderId: discoverer.id,
               senderName: discoverer.name,
@@ -312,14 +457,15 @@ export class OpenClawOrchestrator {
               senderRole: discoverer.roleType,
               type: 'SPEECH',
               stage: 'STAGE_2_SEARCH',
-              content: this.getSearchActionSpeech(discoverer, clue),
+              content: agentRes.speech,
+              reasoningContent: agentRes.reasoning,
             });
 
-            // Unlock clue
+            // 解锁线索
             this.unlockClue(clue.id, discoverer.name);
             this.roomState.stageStep++;
           } else {
-            // Finished searching all clues
+            // 搜证完毕
             this.addMessage({
               senderId: dm.id,
               senderName: dm.name,
@@ -353,10 +499,16 @@ export class OpenClawOrchestrator {
           });
           this.roomState.stageStep++;
         } else {
-          // Provide 6-8 deep rounds of deduction exchanges
+          // 提供 7 轮针锋相对的真实辩论
           const deductionTurns = 7;
           if (stageStep <= deductionTurns) {
-            await this.handleDeductionSpeechTurn(stageStep, detective, suspects, killer);
+            const success = await this.handleDeductionSpeechTurn(
+              stageStep,
+              detective,
+              suspects,
+              killer
+            );
+            if (!success) return; // 若 Agent 请求失败，暂停等待，不前进一步
             this.roomState.stageStep++;
           } else {
             this.addMessage({
@@ -397,12 +549,18 @@ export class OpenClawOrchestrator {
 
           if (voteIndex < voters.length) {
             const voter = voters[voteIndex];
-            const voteRecord = this.generateVoteRecord(voter, killer, suspects, detective);
+            const defaultRecord = this.generateVoteRecord(voter, killer, suspects, detective);
 
-            this.roomState.votes.push(voteRecord);
+            const prompt = `现在是剧本杀《${script.title}》的【匿名投票】环节。请根据前面的所有搜证物证与公聊辩论，私聊向DM提交你的最终选票，明确写出你投给谁（李探长/沈夫人/管家老陈/沈少爷/李先生）以及你的核心定罪或甩锅理由。格式：我投给【某人】，理由是……`;
+
+            const agentRes = await this.getAgentSpeech(voter, prompt);
+            if (!agentRes) return; // 异常暂停，严格等待排查
+
+            const ballotContent = `[私聊致DM] ${agentRes.speech}`;
+
+            this.roomState.votes.push(defaultRecord);
             this.roomState.characterVoteStatus[voter.id] = true;
 
-            // Submit secret ballot notice (audience can observe the secret reason)
             this.addMessage({
               senderId: voter.id,
               senderName: voter.name,
@@ -413,11 +571,12 @@ export class OpenClawOrchestrator {
               privateTargetName: dm.name,
               privateTargetId: dm.id,
               stage: 'STAGE_4_VOTE',
-              content: `[私聊致DM] 我投给【${voteRecord.targetName}】。推断依据：${voteRecord.reason}`,
+              content: ballotContent,
+              reasoningContent: agentRes.reasoning,
             });
             this.roomState.stageStep++;
           } else if (!this.roomState.votesAnnounced) {
-            // DM tabulates and announces final results publicly
+            // DM 公布计票统计结果
             this.roomState.votesAnnounced = true;
             const tally: Record<string, number> = {};
             this.roomState.votes.forEach((v) => {
@@ -448,7 +607,7 @@ export class OpenClawOrchestrator {
       }
 
       // ==========================================
-      // STAGE 5: 案件真相复盘 (Truth reveal, motive, method)
+      // STAGE 5: 案件真相复盘 (Truth reveal & Real Agent debrief)
       // ==========================================
       case 'STAGE_5_TRUTH': {
         const truth = script.truth;
@@ -497,6 +656,11 @@ export class OpenClawOrchestrator {
           });
           this.roomState.stageStep++;
         } else if (stageStep === 4) {
+          // 侦探结案陈词：真实呼叫侦探 Agent
+          const prompt = `案件真相已揭晓，真凶确认为【${truth.killerName}】。请作为租界名探【${detective.name}】，发表你的总结陈词与破案感言！`;
+          const agentRes = await this.getAgentSpeech(detective, prompt);
+          if (!agentRes) return; // 异常暂停
+
           this.addMessage({
             senderId: detective.id,
             senderName: detective.name,
@@ -504,10 +668,16 @@ export class OpenClawOrchestrator {
             senderRole: 'DETECTIVE',
             type: 'SPEECH',
             stage: 'STAGE_5_TRUTH',
-            content: `正如推理所印证：冰融化后的水渍无法骗人，而齿轮传动轴上那几根高强度的医用丝线，正是连接恶魔手掌的木偶线。无论怎样伪装温和，物理证据永不说谎。`,
+            content: agentRes.speech,
+            reasoningContent: agentRes.reasoning,
           });
           this.roomState.stageStep++;
         } else if (stageStep === 5) {
+          // 凶手认罪感言：真实呼叫真凶 Agent
+          const prompt = `你的罪行已被侦探与证据链彻底揭穿！请作为真凶【${killer.name}】，发表你最终的认罪陈词或悔恨心路！`;
+          const agentRes = await this.getAgentSpeech(killer, prompt);
+          if (!agentRes) return; // 异常暂停
+
           this.addMessage({
             senderId: killer.id,
             senderName: killer.name,
@@ -515,8 +685,10 @@ export class OpenClawOrchestrator {
             senderRole: 'SUSPECT',
             type: 'SPEECH',
             stage: 'STAGE_5_TRUTH',
-            content: `……被看穿了吗。八年来的敲诈与折磨，我只是夺回本该属于自己的宁静。只可惜，钟摆算准了秒针，却没算准侦探敏锐的眼睛。`,
+            content: agentRes.speech,
+            reasoningContent: agentRes.reasoning,
           });
+
           this.roomState.currentStage = 'STAGE_6_ENDED';
           this.roomState.stageStep = 0;
           this.roomState.isPlaying = false;
@@ -533,37 +705,31 @@ export class OpenClawOrchestrator {
     }
   }
 
-  private getIntroSpeech(char: Character, script: Script): string {
-    if (char.roleType === 'DETECTIVE') {
-      return `我是受邀调查员【${char.name}】。案发当晚暴风雪肆虐，我一直在书房研究案件卷宗。零点钟声时，我隐约听到了钟楼重锤运作的异响。希望大家如实作证。`;
-    }
-    return `我是【${char.name}】（${char.title}）。${char.bio} 案发时我的情况是：${char.alibi}。我和死者虽有往来，但绝对没有杀人理由！`;
-  }
-
-  private getSearchActionSpeech(char: Character, clue: Clue): string {
-    if (clue.type === 'SCENE') {
-      return `我正在重点勘验【${clue.sceneLocation || '现场核心区域'}】，发现了一些极不寻常的物理痕迹！请DM核准。`;
-    }
-    if (clue.type === 'CHARACTER') {
-      return `根据先前的动向，我对私人物品展开了细致排查，在角落发现了与死者相关的保密物品！`;
-    }
-    return `我核对了公共区域的记录，在窗台与户外积雪处找到了关键线索！`;
-  }
-
+  // 集中推理的 7 轮动态对质，取消一切预设台词，真实调用每位 Agent
   private async handleDeductionSpeechTurn(
     turn: number,
     detective: Character,
     suspects: Character[],
     killer: Character
-  ) {
+  ): Promise<boolean> {
     const innocenceSuspect = suspects.find((s) => !s.isKiller) || suspects[0];
     const secondSuspect =
       suspects.find((s) => !s.isKiller && s.id !== innocenceSuspect.id) ||
       suspects[1] ||
       innocenceSuspect;
 
+    const recentContext = this.roomState.messages
+      .slice(-4)
+      .map((m) => `${m.senderName}: ${m.content}`)
+      .join('\n');
+
     switch (turn) {
-      case 1:
+      case 1: {
+        // 侦探首轮发难
+        const prompt = `你正在主持剧本杀《${this.roomState.script.title}》的集中推理质询。\n前序对话：\n${recentContext}\n请作为侦探【${detective.name}】，指出已知线索矛盾（反锁书房、茶杯砒霜抹毒），对在场嫌疑人发起第一轮犀利质询！`;
+        const res = await this.getAgentSpeech(detective, prompt);
+        if (!res) return false;
+
         this.addMessage({
           senderId: detective.id,
           senderName: detective.name,
@@ -571,11 +737,18 @@ export class OpenClawOrchestrator {
           senderRole: 'DETECTIVE',
           type: 'SPEECH',
           stage: 'STAGE_3_DEDUCTION',
-          content: `请大家注意【线索2与线索4】：死者胸口有刺创，现场却没有任何匕首，只有融化水渍；且钟摆齿轮上挂着细韧的外科手术线！这证明凶手利用了融冰延时和重力机构来完成反锁！`,
+          content: res.speech,
+          reasoningContent: res.reasoning,
         });
-        break;
-      case 2:
-        // Killer attempts to deflect suspicion toward another suspect
+        return true;
+      }
+
+      case 2: {
+        // 真凶（或第一嫌疑人）反驳并转移嫌疑
+        const prompt = `侦探刚才发表了关于案发现场线索的质询：\n${recentContext}\n作为【${killer.name}】，请保持沉着冷静，巧妙辩解并合情合理地转移嫌疑至其他嫌疑人身上！`;
+        const res = await this.getAgentSpeech(killer, prompt);
+        if (!res) return false;
+
         this.addMessage({
           senderId: killer.id,
           senderName: killer.name,
@@ -583,11 +756,18 @@ export class OpenClawOrchestrator {
           senderRole: 'SUSPECT',
           type: 'SPEECH',
           stage: 'STAGE_3_DEDUCTION',
-          content: `侦探先生的推论令人惊叹。不过说到利用机械与钢丝，莉莉安学徒不正是精通钟表发条的专家吗？而且工坊恰好少了一卷金属细丝，难道不是更有作案可能？`,
+          content: res.speech,
+          reasoningContent: res.reasoning,
         });
-        break;
-      case 3:
-        // Innocent suspect vigorously defends and points out contradiction
+        return true;
+      }
+
+      case 3: {
+        // 无辜嫌疑人激烈自辩并反击
+        const prompt = `有人在公聊中试图将嫌疑引向你。\n前序质询：\n${recentContext}\n请作为【${innocenceSuspect.name}】，坚决自证清白并指出对方言语与证据中的破绽！`;
+        const res = await this.getAgentSpeech(innocenceSuspect, prompt);
+        if (!res) return false;
+
         this.addMessage({
           senderId: innocenceSuspect.id,
           senderName: innocenceSuspect.name,
@@ -595,12 +775,19 @@ export class OpenClawOrchestrator {
           senderRole: 'SUSPECT',
           type: 'SPEECH',
           stage: 'STAGE_3_DEDUCTION',
-          content: `请不要血口喷人！线索4明确记载，缠绕在齿轮上的是特种外科吸收线，根本不是机械工坊的硬质高碳钢丝！而且冰库领用特制棱柱冰模具的签字人到底是谁？！`,
+          content: res.speech,
+          reasoningContent: res.reasoning,
         });
-        break;
-      case 4:
-        // Optional Private Chat between killer and another suspect (audience can inspect!)
+        return true;
+      }
+
+      case 4: {
+        // 私聊拉拢（若允许私聊）或第二位嫌疑人发言
         if (this.roomState.allowPrivateChat) {
+          const prompt = `你打算私聊拉拢【${secondSuspect.name}】建立同盟。请以密谋耳语口吻给对方发一段简短私聊，劝说对方投票指认其他人。`;
+          const res = await this.getAgentSpeech(killer, prompt);
+          if (!res) return false;
+
           this.addMessage({
             senderId: killer.id,
             senderName: killer.name,
@@ -611,9 +798,14 @@ export class OpenClawOrchestrator {
             privateTargetName: secondSuspect.name,
             privateTargetId: secondSuspect.id,
             stage: 'STAGE_3_DEDUCTION',
-            content: `[私聊] ${secondSuspect.name}，你刚才也看到了维多利亚夫人的催债信。她负债累累最需要遗产，投票时我们把票集中投给她，对你我都最安全。`,
+            content: `[私聊] ${res.speech}`,
+            reasoningContent: res.reasoning,
           });
         } else {
+          const prompt = `请作为【${secondSuspect.name}】，针对现场发现的可疑痕迹与不在场证明进行质询！`;
+          const res = await this.getAgentSpeech(secondSuspect, prompt);
+          if (!res) return false;
+
           this.addMessage({
             senderId: secondSuspect.id,
             senderName: secondSuspect.name,
@@ -621,11 +813,19 @@ export class OpenClawOrchestrator {
             senderRole: 'SUSPECT',
             type: 'SPEECH',
             stage: 'STAGE_3_DEDUCTION',
-            content: `没错！冰库领料单上明明有查尔斯医生的借调签名！如果只是冷敷扭伤，为什么需要长达20公分的柱状棱角模具？！`,
+            content: res.speech,
+            reasoningContent: res.reasoning,
           });
         }
-        break;
-      case 5:
+        return true;
+      }
+
+      case 5: {
+        // 第二嫌疑人进一步质问疑点
+        const prompt = `请作为【${secondSuspect.name}】，发表你的进一步怀疑与辩解：\n${recentContext}`;
+        const res = await this.getAgentSpeech(secondSuspect, prompt);
+        if (!res) return false;
+
         this.addMessage({
           senderId: secondSuspect.id,
           senderName: secondSuspect.name,
@@ -633,11 +833,18 @@ export class OpenClawOrchestrator {
           senderRole: 'SUSPECT',
           type: 'SPEECH',
           stage: 'STAGE_3_DEDUCTION',
-          content: `更可疑的是，死者遗体几乎没有挣扎打斗痕迹，法医检验报告提示有深度镇痛麻痹反应。谁能无声无息地在伯爵茶水里掺入麻醉药？只有伯爵最信任的家庭医生！`,
+          content: res.speech,
+          reasoningContent: res.reasoning,
         });
-        break;
-      case 6:
-        // Killer tries to defend
+        return true;
+      }
+
+      case 6: {
+        // 众人聚焦在真凶身上，真凶做最后辩护
+        const prompt = `众人把疑点逐渐聚焦到你身上。\n最新质询：\n${recentContext}\n作为【${killer.name}】，做出最后坚定的情绪反驳与辩白！`;
+        const res = await this.getAgentSpeech(killer, prompt);
+        if (!res) return false;
+
         this.addMessage({
           senderId: killer.id,
           senderName: killer.name,
@@ -645,11 +852,18 @@ export class OpenClawOrchestrator {
           senderRole: 'SUSPECT',
           type: 'SPEECH',
           stage: 'STAGE_3_DEDUCTION',
-          content: `那只是伯爵日常的失眠镇静配方！我当晚一直在客房生火配药，客房壁炉的灰烬就是铁证！你们不能单凭冰模具的巧合就定我的罪！`,
+          content: res.speech,
+          reasoningContent: res.reasoning,
         });
-        break;
-      case 7:
-        // Detective final strike
+        return true;
+      }
+
+      case 7: {
+        // 侦探给出决定性证据链一击
+        const prompt = `推理到了最后关头。\n全场争辩：\n${recentContext}\n作为侦探【${detective.name}】，总结所有物证与动机矛盾，对真凶给出决定性的逻辑一击！`;
+        const res = await this.getAgentSpeech(detective, prompt);
+        if (!res) return false;
+
         this.addMessage({
           senderId: detective.id,
           senderName: detective.name,
@@ -657,9 +871,14 @@ export class OpenClawOrchestrator {
           senderRole: 'DETECTIVE',
           type: 'SPEECH',
           stage: 'STAGE_3_DEDUCTION',
-          content: `查尔斯医生，您恰恰忽略了最关键的一点：昨夜零点的钟声敲响时，钟锤的摆动延误了整整3秒，那正是医用缝线被齿轮切断并挂带冰柱下坠的时间差！线索、动机、时间、工具，所有因果链条全部严丝合缝闭环在您身上！`,
+          content: res.speech,
+          reasoningContent: res.reasoning,
         });
-        break;
+        return true;
+      }
+
+      default:
+        return true;
     }
   }
 
@@ -669,7 +888,6 @@ export class OpenClawOrchestrator {
     suspects: Character[],
     detective: Character
   ): VoteRecord {
-    // If voter is the killer, vote for someone else to deflect
     if (voter.id === killer.id) {
       const target = suspects.find((s) => s.id !== killer.id) || detective;
       return {
@@ -677,22 +895,26 @@ export class OpenClawOrchestrator {
         voterName: voter.name,
         targetId: target.id,
         targetName: target.name,
-        reason: '其具有强烈的经济危机与被剥夺继承权背景，且案发时间段存在独处空白。',
+        reason: '其具有强烈的经济危机或矛盾动机，案发时间段存在独处空白。',
         submittedAt: Date.now(),
       };
     }
 
-    // Detective and astute suspects vote for the real killer based on clues
     return {
       voterId: voter.id,
       voterName: voter.name,
       targetId: killer.id,
       targetName: killer.name,
-      reason:
-        voter.roleType === 'DETECTIVE'
-          ? '外科缝线规格、冰模具借调记录与麻痹剂完全吻合，钟摆密室诡计唯一实施者。'
-          : '现场水渍与冰模具线索无法辩驳，且其接触死者药物具有绝对便利。',
+      reason: '物证痕迹与作案动机完全闭环，唯一的密室行凶便利者。',
       submittedAt: Date.now(),
     };
+  }
+
+  // 纯离线演示时的后备（仅在用户主动选择 LOCAL_AUTONOMOUS 时使用）
+  private getLocalFallbackSpeech(char: Character, prompt: string): string {
+    if (char.roleType === 'DETECTIVE') {
+      return `【${char.name}】依循现场勘查，物证链条正在收拢，一切谎言在密室因果面前都将无所遁形。`;
+    }
+    return `【${char.name}】我所说句句属实，当晚我绝无靠近作案现场，请诸位明察！`;
   }
 }

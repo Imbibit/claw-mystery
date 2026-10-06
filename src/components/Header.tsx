@@ -3,8 +3,8 @@ import { Shield, Play, Library, Server, FileText, Activity } from 'lucide-react'
 import { OpenClawConfig } from '../types/script';
 
 interface HeaderProps {
-  activeTab: 'room' | 'scripts' | 'home' | 'guide';
-  setActiveTab: (tab: 'room' | 'scripts' | 'home' | 'guide') => void;
+  activeTab: 'room' | 'scripts' | 'home' | 'guide' | 'test';
+  setActiveTab: (tab: 'room' | 'scripts' | 'home' | 'guide' | 'test') => void;
   openclawConfig: OpenClawConfig;
   onOpenServerSettings: () => void;
   onOpenCreateRoom: () => void;
@@ -73,6 +73,18 @@ export const Header: React.FC<HeaderProps> = ({
             }`}
           >
             剧本库管理
+          </button>
+
+          <button
+            onClick={() => setActiveTab('test')}
+            className={`transition-colors pb-0.5 border-b-2 flex items-center gap-1.5 ${
+              activeTab === 'test'
+                ? 'text-amber-400 border-amber-400'
+                : 'text-slate-400 border-transparent hover:text-slate-200'
+            }`}
+          >
+            <Server className="w-3.5 h-3.5" />
+            <span>OpenClaw联调测试</span>
           </button>
 
           <button

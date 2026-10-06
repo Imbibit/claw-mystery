@@ -165,9 +165,38 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({
             </div>
           )}
 
-          <div className="p-3 bg-slate-950 rounded-lg border border-slate-800 space-y-1 text-[11px] text-slate-400 leading-relaxed">
-            <span className="font-semibold text-slate-200 block">双引擎兜底架构：</span>
-            本系统内置了与 OpenClaw 协议 100% 兼容的本地多Agent调度器。即使阿里云服务器临时维护或关机，您也可以无缝切换为内置引擎，立即跑通一整轮剧本杀！
+          {/* OpenClaw Workspace & Agent Role Creation Details */}
+          <div className="p-3 bg-slate-950 rounded-lg border border-slate-800 space-y-2 text-xs">
+            <div className="flex items-center justify-between">
+              <span className="font-semibold text-amber-400 flex items-center gap-1.5">
+                <Cpu className="w-3.5 h-3.5" />
+                <span>OpenClaw 工作目录角色创建机制</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setServerUrl('http://47.90.189.59:17293');
+                  setWsUrl('ws://47.90.189.59:17293/ws');
+                }}
+                className="text-[10px] text-amber-400/90 hover:text-amber-300 underline"
+              >
+                填入 47.90.189.59:17293
+              </button>
+            </div>
+
+            <p className="text-[11px] text-slate-300 leading-relaxed">
+              当您配置并启动推演时，本应用会向您的 OpenClaw 服务端发送剧本角色初始化请求（包含独立的 System Prompt、记忆隔离作用域与人设设定）。
+              OpenClaw 收到请求后，将在服务器工作目录（如 <code className="text-amber-300 font-mono text-[10px]">~/.openclaw/workspace/</code>）下自动为每位角色创建独立的数据空间。
+            </p>
+
+            <div className="p-2 bg-slate-900 rounded border border-slate-800 font-mono text-[10px] text-slate-400 space-y-1">
+              <div className="text-slate-300 font-semibold">📁 服务端生成的工作目录结构预览：</div>
+              <div>├── workspace/sessions/script-clocktower-blizzard/</div>
+              <div>│   ├── char-adrian-dm/ (DM主持 Agent 记忆与规则)</div>
+              <div>│   ├── char-alex-detective/ (侦探 Agent 证据分析与推理日志)</div>
+              <div>│   ├── char-charles-killer/ (真凶 Agent 秘密伪装与答辩记忆)</div>
+              <div>│   └── char-victoria/ / char-bernard/ / char-lillian/ ...</div>
+            </div>
           </div>
         </div>
 
@@ -179,7 +208,7 @@ export const ServerSettingsModal: React.FC<ServerSettingsModalProps> = ({
             className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-300 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 border border-slate-700 rounded-lg transition-colors"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${testing ? 'animate-spin' : ''}`} />
-            <span>{testing ? '正在探测连通性...' : '测试服务器连通性'}</span>
+            <span>{testing ? '正在探测连通性...' : '测试 47.90.189.59 连通性'}</span>
           </button>
 
           <div className="flex items-center gap-2">

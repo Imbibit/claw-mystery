@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Play, Sparkles, Server, Cpu, Shield, MessageCircle } from 'lucide-react';
+import { Play, Sparkles, Server, Cpu, Clock, ShieldCheck } from 'lucide-react';
 import { Script, EngineMode, OpenClawConfig } from '../types/script';
 
 interface RoomCreateModalProps {
@@ -10,7 +10,6 @@ interface RoomCreateModalProps {
   onStartDeduction: (
     script: Script,
     engineMode: EngineMode,
-    speed: 'slow' | 'normal' | 'fast',
     allowPrivateChat: boolean
   ) => void;
 }
@@ -26,9 +25,8 @@ export const RoomCreateModal: React.FC<RoomCreateModalProps> = ({
     selectedScriptId || scripts[0]?.id || ''
   );
   const [engineMode, setEngineMode] = useState<EngineMode>(
-    openclawConfig.engineMode || 'LOCAL_AUTONOMOUS'
+    openclawConfig.engineMode || 'REMOTE_OPENCLAW'
   );
-  const [speed, setSpeed] = useState<'slow' | 'normal' | 'fast'>('normal');
   const [allowPrivateChat, setAllowPrivateChat] = useState(true);
 
   const currentScript =
@@ -36,7 +34,7 @@ export const RoomCreateModal: React.FC<RoomCreateModalProps> = ({
 
   const handleLaunch = () => {
     if (!currentScript) return;
-    onStartDeduction(currentScript, engineMode, speed, allowPrivateChat);
+    onStartDeduction(currentScript, engineMode, allowPrivateChat);
   };
 
   return (
@@ -107,7 +105,7 @@ export const RoomCreateModal: React.FC<RoomCreateModalProps> = ({
                   <span>阿里云 OpenClaw</span>
                 </div>
                 <div className="text-[10px] text-slate-400 mt-1">
-                  轻量应用服务器专线路由
+                  真实 Agent 直连 · 禁止预设降级
                 </div>
               </button>
 
@@ -143,49 +141,43 @@ export const RoomCreateModal: React.FC<RoomCreateModalProps> = ({
                   <span>自主协同引擎</span>
                 </div>
                 <div className="text-[10px] text-slate-400 mt-1">
-                  即开即推 · 100%跑通
+                  纯本地离线演播
                 </div>
               </button>
             </div>
           </div>
 
-          {/* Speed & Options */}
+          {/* Rhythm & Options (Speed settings cancelled as requested) */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs font-semibold text-slate-300 block mb-1.5">
-                3. AI 发言节奏速度
-              </label>
-              <div className="grid grid-cols-3 gap-1 bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs">
-                {(['slow', 'normal', 'fast'] as const).map((spd) => (
-                  <button
-                    key={spd}
-                    type="button"
-                    onClick={() => setSpeed(spd)}
-                    className={`py-1 rounded text-center transition-colors ${
-                      speed === spd
-                        ? 'bg-amber-400 text-slate-950 font-bold'
-                        : 'text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    {spd === 'slow' ? '慢速 (3s)' : spd === 'normal' ? '中速 (2s)' : '快速 (1s)'}
-                  </button>
-                ))}
+            <div className="p-3 bg-slate-950 rounded-lg border border-slate-800 text-xs space-y-1.5">
+              <div className="flex items-center gap-1.5 font-semibold text-slate-200">
+                <Clock className="w-3.5 h-3.5 text-amber-400" />
+                <span>推演节奏：静候真实 Agent 回复</span>
               </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                已严格取消人工倍速设置。推演将依照远程 OpenClaw 模型的真实思考速度，逐句等待 Agent 完成推理，绝不提前跳过。
+              </p>
             </div>
 
-            <div>
-              <label className="text-xs font-semibold text-slate-300 block mb-1.5">
-                4. 角色私聊与密谋
-              </label>
-              <label className="flex items-center gap-2 p-2 bg-slate-950 rounded-lg border border-slate-800 cursor-pointer text-xs text-slate-300">
-                <input
-                  type="checkbox"
-                  checked={allowPrivateChat}
-                  onChange={(e) => setAllowPrivateChat(e.target.checked)}
-                  className="rounded border-slate-700 text-amber-500 focus:ring-amber-400"
-                />
-                <span>允许 AI 角色私聊密谋（观众可见）</span>
-              </label>
+            <div className="p-3 bg-slate-950 rounded-lg border border-slate-800 text-xs flex flex-col justify-between">
+              <div>
+                <label className="text-xs font-semibold text-slate-300 block mb-1">
+                  角色私聊与密谋
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300 mt-1.5">
+                  <input
+                    type="checkbox"
+                    checked={allowPrivateChat}
+                    onChange={(e) => setAllowPrivateChat(e.target.checked)}
+                    className="rounded border-slate-700 text-amber-500 focus:ring-amber-400"
+                  />
+                  <span>允许 AI 角色私聊密谋（观众视角可见）</span>
+                </label>
+              </div>
+              <div className="text-[10px] text-emerald-400/90 mt-2 flex items-center gap-1">
+                <ShieldCheck className="w-3 h-3" />
+                <span>已关闭自动静默降级（禁用预设台词替代）</span>
+              </div>
             </div>
           </div>
         </div>
