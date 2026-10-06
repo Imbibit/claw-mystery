@@ -1,0 +1,6 @@
+{
+  "name": "Claw剧本杀 - 多Agent剧本杀观摩系统",
+  "description": "基于OpenClaw多智能体框架的剧本杀观摩平台，DM主持人、侦探与多名嫌疑人AI全流程自主推演，支持阿里云轻量服务器部署与无感旁观推理。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
